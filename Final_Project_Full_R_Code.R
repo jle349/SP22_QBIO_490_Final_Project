@@ -5,14 +5,137 @@ library(ggplot2)
 library(EnhancedVolcano)
 library(survival)
 library(survminer)
+library(maftools)
 
+# Download Clinical Data
+query_clin <- GDCquery(project = "TCGA-COAD", 
+                       data.category = "Clinical",
+                       file.type = "xml")
+GDCdownload(query_clin)
+clinic <- GDCprepare_clinic(query_clin, clinical.info = "patient")
+colnames(clinic)[colnames(clinic) == "bcr_patient_barcode"] <- "Tumor_Sample_Barcode"
+colnames(clinic)[colnames(clinic) == "gender"] <- "sex"
+names(clinic)[names(clinic)=="days_to_last_followup"] <- "days_to_last_follow_up"
+
+#replace NA days to death with days to last follow up
+clinic$days_to_death = ifelse(is.na(clinic$days_to_death), clinic$days_to_last_follow_up, clinic$days_to_death)
+
+clinic$death_event = ifelse(clinic$vital_status == "Dead", 1, 0)
+
+#produce survival plot comparing female vs male patients
+surv_object <- Surv(time = clinic$days_to_death, 
+                    event = clinic$death_event)
+
+sex_fit <- surv_fit( surv_object ~ clinic$sex, data = clinic)
+
+survplot = ggsurvplot(sex_fit, 
+                      pval=TRUE, xlab = "Time (Days)",
+                      ggtheme = theme(plot.margin = unit(c(1,1,1,1), "cm")), 
+                      legend = "right")
+
+p = survplot$plot + 
+  theme_bw() +  # changes the appearance to be a bit prettier
+  theme(axis.title = element_text(size=20), # increase font sizes
+        axis.text = element_text(size=16),
+        legend.title = element_text(size=14),
+        legend.text = element_text(size=12))
+p
+
+#rna gene counts analysis
 query <- GDCquery(project = "TCGA-COAD", 
                   data.category = "Transcriptome Profiling", # get the RNA-seq transcriptome
                   data.type = "Gene Expression Quantification", # gets the counts
-                  workflow.type = "STAR - Counts")
+                  workflow.type = "STAR - Counts"
+)
 
 GDCdownload(query, method="api")
 sum_exp = GDCprepare(query)
+
+
+#maf - mutation analysis
+query_maf <- GDCquery(project = "TCGA-COAD",
+                      data.category = "Simple Nucleotide Variation",
+                      data.type = "Masked Somatic Mutation",
+                      legacy = F)
+GDCdownload(query_maf)
+
+maf_prep <- GDCprepare(query_maf)
+maf_object <- read.maf(maf = maf_prep,
+                       clinicalData = clinic,
+                       isTCGA = TRUE)
+
+
+# cooncoplot
+clinic <- maf_object@clinical.data
+
+name <- ifelse(clinic$gender=="MALE", TRUE, FALSE)
+male_patient_ids <- clinic[name, Tumor_Sample_Barcode]
+male_maf <- subsetMaf(maf = maf_object,
+                      tsb = male_patient_ids)
+
+name2 <- ifelse(clinic$gender=="FEMALE", TRUE, FALSE)
+female_patient_ids <- clinic[name2, Tumor_Sample_Barcode]
+female_maf = subsetMaf(maf = maf_object,
+                       tsb = female_patient_ids)
+
+
+coOncoplot(m1 = male_maf, 
+           m2 = female_maf, 
+           genes = c("APC", "TP53", "TTN", "KRAS", "PIK3CA"),
+           m1Name = "Male Patients", 
+           m2Name = "Female Patients")
+
+#boxplots
+#APC
+geneA_id_mask <- rowData(sum_exp)$gene_name == "APC"
+apc_counts = assays(sum_exp)$"unstranded"[geneA_id_mask, ]
+boxplot(apc_counts ~ colData(sum_exp)$gender,
+        main = "APC Gene Counts Comparison of Both Sexes",
+        col = "green",
+        xlab = "Sex",
+        ylab = "Gene Counts"
+)
+
+#TP53
+geneB_id_mask <- rowData(sum_exp)$gene_name == "TP53"
+tp53_counts = assays(sum_exp)$"unstranded"[geneB_id_mask, ]
+boxplot(tp53_counts ~ colData(sum_exp)$gender,
+        main = "TP53 Gene Counts Comparison of Both Sexes",
+        col = "green",
+        xlab = "Sex",
+        ylab = "Gene Counts"
+)
+
+#TTN
+geneC_id_mask <- rowData(sum_exp)$gene_name == "TTN"
+ttn_counts = assays(sum_exp)$"unstranded"[geneC_id_mask, ]
+boxplot(ttn_counts ~ colData(sum_exp)$gender,
+        main = "TTN Gene Counts Comparison of Both Sexes",
+        col = "green",
+        xlab = "Sex",
+        ylab = "Gene Counts"
+)
+
+#KRAS
+geneD_id_mask <- rowData(sum_exp)$gene_name == "KRAS"
+kras_counts = assays(sum_exp)$"unstranded"[geneD_id_mask, ]
+boxplot(kras_counts ~ colData(sum_exp)$gender,
+        main = "KRAS Gene Counts Comparison of Both Sexes",
+        col = "green",
+        xlab = "Sex",
+        ylab = "Gene Counts"
+)
+
+#PIK3CA
+geneE_id_mask <- rowData(sum_exp)$gene_name == "PIK3CA"
+pik3ca_counts = assays(sum_exp)$"unstranded"[geneE_id_mask, ]
+boxplot(pik3ca_counts ~ colData(sum_exp)$gender,
+        main = "PIK3CA Gene Counts Comparison of Both Sexes",
+        col = "green",
+        xlab = "Sex",
+        ylab = "Gene Counts"
+)
+
 
 #get counts data
 counts = assays(sum_exp)$unstranded
@@ -116,7 +239,6 @@ EnhancedVolcano(results, lab = rownames(results), x = 'log2FoldChange',
                 legendLabSize = 9, legendIconSize = 3.0, drawConnectors = TRUE, hline = log_p, 
                 widthConnectors = 0.50, colConnectors = 'black', maxoverlapsConnectors = 30)
 
-colData(sum_exp)$sample_type
 
 tumor_mask = colData(sum_exp)$sample_type == "Primary Tumor"
 normal_mask = colData(sum_exp)$sample_type == "Solid Tissue Normal"
@@ -270,39 +392,6 @@ EnhancedVolcano(female_comp_results, lab = rownames(female_comp_results), x = 'l
 
 
 
-# Download Clinical Data
-query_clin <- GDCquery(project = "TCGA-COAD", 
-                       data.category = "Clinical",
-                       file.type = "xml")
-GDCdownload(query_clin)
-clinic <- GDCprepare_clinic(query_clin, clinical.info = "patient")
-colnames(clinic)[colnames(clinic) == "bcr_patient_barcode"] <- "Tumor_Sample_Barcode"
-colnames(clinic)[colnames(clinic) == "gender"] <- "sex"
-names(clinic)[names(clinic)=="days_to_last_followup"] <- "days_to_last_follow_up"
-
-#replace NA days to death with days to last follow up
-clinic$days_to_death = ifelse(is.na(clinic$days_to_death), clinic$days_to_last_follow_up, clinic$days_to_death)
-
-clinic$death_event = ifelse(clinic$vital_status == "Dead", 1, 0)
-
-#produce survival plot comparing female vs male patients
-surv_object <- Surv(time = clinic$days_to_death, 
-                    event = clinic$death_event)
-
-sex_fit <- surv_fit( surv_object ~ clinic$sex, data = clinic)
-
-survplot = ggsurvplot(sex_fit, 
-                      pval=TRUE, xlab = "Time (Days)",
-                      ggtheme = theme(plot.margin = unit(c(1,1,1,1), "cm")), 
-                      legend = "right")
-
-p = survplot$plot + 
-  theme_bw() +  # changes the appearance to be a bit prettier
-  theme(axis.title = element_text(size=20), # increase font sizes
-        axis.text = element_text(size=16),
-        legend.title = element_text(size=14),
-        legend.text = element_text(size=12))
-p
 
 
 
